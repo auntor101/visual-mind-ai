@@ -134,13 +134,12 @@ def answer_followup_stream(
             messages=messages,
             max_tokens=400,
             stream=True,
-            stream_options={"include_usage": True},
         )
 
         for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
-            if getattr(chunk, "usage", None):
+            if getattr(chunk, "usage", None) and chunk.usage.total_tokens:
                 token_bucket.append(chunk.usage.total_tokens)
 
     except Exception as e:
