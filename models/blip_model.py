@@ -49,8 +49,8 @@ def _post_with_retry(url: str, headers: dict, image_bytes: bytes, retries: int =
             if response.status_code == 401:
                 return "❌ Invalid HuggingFace token. Check it at huggingface.co/settings/tokens"
 
-            if response.status_code == 403:
-                # New router needs special token permissions — signal caller to try fallback
+            if response.status_code in (403, 404):
+                # Router doesn't support this model — signal caller to try fallback
                 return None
 
             return f"API error {response.status_code}: {response.text[:150]}"
@@ -71,9 +71,9 @@ def get_blip_caption(image_bytes: bytes, hf_token: str) -> str:
         "Content-Type": "image/jpeg",
     }
 
-    # Try new router first; fall back to classic endpoint if 403 (token lacks provider permissions)
-    result = _post_with_retry(BLIP_API_URL_NEW, headers, image_bytes)
+    # Try classic endpoint first (stable); fall back to new router if it signals None
+    result = _post_with_retry(BLIP_API_URL_OLD, headers, image_bytes)
     if result is not None:
         return result
 
-    return _post_with_retry(BLIP_API_URL_OLD, headers, image_bytes) or "Caption unavailable."
+    return _post_with_retry(BLIP_API_URL_NEW, headers, image_bytes) or "Caption unavailable."
