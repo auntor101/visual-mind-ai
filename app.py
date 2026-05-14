@@ -5,7 +5,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from models.blip_model import get_blip_caption
-from models.groq_vision import answer_followup, get_initial_analysis
+from models.groq_vision import answer_followup_stream, get_initial_analysis, get_suggested_questions
 from utils.image_utils import get_image_info, validate_and_process
 
 load_dotenv()
@@ -507,9 +507,18 @@ st.markdown(
 )
 
 # ── Session state init ────────────────────────────────────────────────────────
-for _key in ["image_bytes", "blip_caption", "groq_analysis", "conversation_history", "image_info"]:
+_defaults: dict = {
+    "image_bytes": None,
+    "blip_caption": None,
+    "groq_analysis": None,
+    "conversation_history": [],
+    "image_info": None,
+    "suggested_questions": [],
+    "pending_question": "",
+}
+for _key, _default in _defaults.items():
     if _key not in st.session_state:
-        st.session_state[_key] = None if _key != "conversation_history" else []
+        st.session_state[_key] = _default
 
 # ── File uploader ─────────────────────────────────────────────────────────────
 uploaded_file = st.file_uploader(
@@ -531,6 +540,8 @@ if uploaded_file:
             st.session_state.groq_analysis = None
             st.session_state.conversation_history = []
             st.session_state.image_info = get_image_info(image_bytes)
+            st.session_state.suggested_questions = []
+            st.session_state.pending_question = ""
 
         need_blip = st.session_state.blip_caption is None
         need_groq = st.session_state.groq_analysis is None
@@ -560,6 +571,16 @@ if uploaded_file:
                             st.session_state.total_tokens += tokens
                     else:
                         st.session_state.groq_analysis = "⚠️ Groq API key not provided."
+
+        # Generate suggested questions once analysis is available
+        if (
+            not st.session_state.suggested_questions
+            and st.session_state.groq_analysis
+            and not st.session_state.groq_analysis.startswith(("⚠️", "Groq API error"))
+        ):
+            st.session_state.suggested_questions = get_suggested_questions(
+                st.session_state.groq_analysis
+            )
 
         st.divider()
 
@@ -650,7 +671,17 @@ if uploaded_file:
             with btn_clear:
                 if st.button("🗑 Clear Chat", use_container_width=True):
                     st.session_state.conversation_history = []
+                    st.session_state.pending_question = ""
                     st.rerun()
+
+            # Copy-friendly plain-text view of the full analysis
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+            with st.expander("📋 Copy Analysis Text", expanded=False):
+                st.code(
+                    f"BLIP Caption:\n{st.session_state.blip_caption or '—'}\n\n"
+                    f"Llama 4 Scout Analysis:\n{st.session_state.groq_analysis or '—'}",
+                    language=None,
+                )
 
         # ── Chat ──────────────────────────────────────────────────────────────
         st.divider()
@@ -669,31 +700,55 @@ if uploaded_file:
             unsafe_allow_html=True,
         )
 
+        # Suggested questions (shown only before first Q&A turn)
+        if st.session_state.suggested_questions and not st.session_state.conversation_history:
+            st.markdown(
+                "<div style='font-size:0.75rem; color:rgba(248,250,252,0.38); "
+                "margin-bottom:8px; letter-spacing:0.2px;'>✦ Suggested questions</div>",
+                unsafe_allow_html=True,
+            )
+            sq_cols = st.columns(len(st.session_state.suggested_questions), gap="small")
+            for sq_col, sq in zip(sq_cols, st.session_state.suggested_questions):
+                if sq_col.button(sq, use_container_width=True, key=f"sq_{sq[:24]}"):
+                    st.session_state.pending_question = sq
+                    st.rerun()
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
         for message in st.session_state.conversation_history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
         user_question = st.chat_input("What would you like to know about this image?")
 
-        if user_question:
+        # Pending question wins (set by a suggested-question button click)
+        active_question = user_question
+        if st.session_state.pending_question:
+            active_question = st.session_state.pending_question
+            st.session_state.pending_question = ""
+
+        if active_question:
             if not groq_key:
                 st.warning("Groq API key required for Q&A — add it in the sidebar.")
             else:
                 with st.chat_message("user"):
-                    st.markdown(user_question)
+                    st.markdown(active_question)
 
                 with st.chat_message("assistant"):
-                    with st.spinner("Thinking…"):
-                        answer, tokens = answer_followup(
+                    token_bucket: list[int] = []
+                    answer = st.write_stream(
+                        answer_followup_stream(
                             st.session_state.image_bytes,
-                            user_question,
+                            active_question,
                             st.session_state.conversation_history,
                             groq_key,
+                            token_bucket,
                         )
-                    st.markdown(answer)
-                    st.caption(f"Tokens used this turn: {tokens:,}")
+                    )
+                    tokens = token_bucket[0] if token_bucket else 0
+                    if tokens:
+                        st.caption(f"Tokens used this turn: {tokens:,}")
 
-                st.session_state.conversation_history.append({"role": "user", "content": user_question})
+                st.session_state.conversation_history.append({"role": "user", "content": active_question})
                 st.session_state.conversation_history.append({"role": "assistant", "content": answer})
                 st.session_state.total_tokens += tokens
                 st.session_state.qa_turns += 1

@@ -1,3 +1,12 @@
+---
+title: VisualMind AI
+emoji: 👁️
+colorFrom: purple
+colorTo: blue
+sdk: docker
+pinned: false
+---
+
 # VisualMind AI — Dual-Model Visual Intelligence
 
 **VisualMind AI** is a Streamlit application that combines **Hugging Face BLIP-large** (open-source image captioning via the Inference API) with **Meta Llama 4 Scout** on **Groq** (multimodal vision + language) for rich image understanding and conversational visual Q&A.
