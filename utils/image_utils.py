@@ -1,7 +1,7 @@
 from PIL import Image
 import io
 
-ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP", "GIF"}
 MAX_DIMENSION = 1024
 MAX_SIZE_MB = 4
 
@@ -9,22 +9,25 @@ MAX_SIZE_MB = 4
 def validate_and_process(uploaded_file) -> tuple[bytes, str]:
     """
     Validate file type, resize if needed, return (image_bytes, error_message).
-    Returns ("", error_message) on failure.
+    Returns (b"", error_message) on failure.
     """
-    if uploaded_file.type not in ALLOWED_TYPES:
-        return b"", f"Unsupported file type: {uploaded_file.type}. Please upload JPEG, PNG, WebP, or GIF."
-
     raw_bytes = uploaded_file.read()
+
+    if len(raw_bytes) > MAX_SIZE_MB * 1024 * 1024:
+        return b"", f"File too large. Maximum size is {MAX_SIZE_MB} MB."
 
     try:
         img = Image.open(io.BytesIO(raw_bytes))
+        # Validate against actual file content, not the browser-supplied MIME type
+        if img.format not in ALLOWED_FORMATS:
+            return b"", f"Unsupported image format: {img.format}. Please upload JPEG, PNG, WebP, or GIF."
 
         # Convert RGBA or P mode to RGB for JPEG compatibility
         if img.mode in ("RGBA", "P", "LA"):
             img = img.convert("RGB")
 
         # Resize if too large
-        if max(img.size) > MAX_DIMENSION or len(raw_bytes) > MAX_SIZE_MB * 1024 * 1024:
+        if max(img.size) > MAX_DIMENSION:
             img.thumbnail((MAX_DIMENSION, MAX_DIMENSION), Image.LANCZOS)
             buffer = io.BytesIO()
             img.save(buffer, format="JPEG", quality=85)
